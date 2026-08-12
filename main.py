@@ -5,9 +5,15 @@ Belirlenen haber sitelerinin RSS beslemelerini kontrol eder,
 daha önce görülmemiş ve son 30 dakika içinde yayınlanmış
 haberleri Telegram'a bildirir.
 
-Gerekli ortam değişkenleri (GitHub Secrets üzerinden gelir):
-- TELEGRAM_TOKEN : BotFather'dan alınan bot token'ı
-- CHAT_ID        : Bildirimlerin gönderileceği sohbet/kanal ID'si
+Telegram komutları (bot dinleyici ayrı bir workflow ile çalışır):
+  /durum   → botun son çalışma bilgisini gösterir
+  /başlat  → GitHub Actions workflow'unu manuel tetikler
+
+Gerekli ortam değişkenleri (GitHub Secrets):
+  TELEGRAM_TOKEN   : BotFather'dan alınan bot token'ı
+  CHAT_ID          : Bildirimlerin gönderileceği sohbet ID'si
+  GH_TOKEN_PAT : GitHub Personal Access Token (workflow tetiklemek için)
+  GH_REPO      : kullanıcıadı/repo-adi formatında repo adı
 """
 
 import json
@@ -21,48 +27,42 @@ import httpx
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
+GITHUB_TOKEN_PAT = os.environ.get("GITHUB_TOKEN_PAT", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
 
-# Takip edilecek kaynaklar.
-# Yeni bir kaynak eklemek için "Kaynak Adı": "RSS_URL" satırı eklemen yeterli.
 FEEDS = {
     "NTV": "https://www.ntv.com.tr/gundem.rss",
     "Sözcü": "https://www.sozcu.com.tr/feeds-son-dakika",
     "Habertürk": "https://www.haberturk.com/rss",
     "Hürriyet": "https://www.hurriyet.com.tr/rss/anasayfa",
     "Sporx": "https://www.sporx.com/son-dakika-rss",
+    "BBC Türkçe": "https://feeds.bbci.co.uk/turkce/rss.xml",
+    "Milliyet": "https://www.milliyet.com.tr/rss/rssNew/gundemRss.xml",
+    "Cumhuriyet": "https://www.cumhuriyet.com.tr/rss/son_dakika.xml",
 }
 
 STATE_FILE = Path("seen_ids.json")
 MAX_STORED_PER_FEED = 300
-
-# Bu süreden eski haberler bildirilmez.
-# GitHub Actions bazen gecikmeli tetiklendiğinden biraz geniş tutuyoruz.
 MAX_HABER_YASI_DAKIKA = 30
 
 
 def load_state() -> dict:
-    """Daha önce görülen haber ID'lerini dosyadan okur."""
     if STATE_FILE.exists():
         try:
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            print("⚠️ seen_ids.json bozuk görünüyor, sıfırdan başlanıyor.")
+            print("⚠️ seen_ids.json bozuk, sıfırdan başlanıyor.")
             return {}
     return {}
 
 
 def save_state(state: dict) -> None:
-    """Görülen haber ID'lerini dosyaya yazar."""
     STATE_FILE.write_text(
         json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
 def parse_entry_time(entry) -> datetime | None:
-    """
-    RSS entry'sinin yayınlanma zamanını döner.
-    Birden fazla zaman alanını dener; hiçbiri yoksa None döner.
-    """
     for field in ("published_parsed", "updated_parsed", "created_parsed"):
         t = entry.get(field)
         if t:
@@ -74,33 +74,104 @@ def parse_entry_time(entry) -> datetime | None:
 
 
 def is_recent(entry) -> bool:
-    """
-    Haberin MAX_HABER_YASI_DAKIKA içinde yayınlanıp yayınlanmadığını kontrol eder.
-    Zaman bilgisi yoksa haberi yeni kabul eder (kaçırmamak için).
-    """
     pub_time = parse_entry_time(entry)
     if pub_time is None:
-        return True  # zaman bilinmiyorsa gönder, kaçırma
+        return True
     now = datetime.now(timezone.utc)
     return (now - pub_time) <= timedelta(minutes=MAX_HABER_YASI_DAKIKA)
 
 
-def send_telegram(client: httpx.Client, kaynak: str, title: str, link: str) -> None:
-    """Tek bir haberi Telegram'a gönderir."""
-    text = f"📰 <b>{kaynak}</b>\n{title}\n{link}"
+def send_telegram(client: httpx.Client, text: str, chat_id: str = None) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = client.post(
             url,
-            json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
+            json={
+                "chat_id": chat_id or CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+            },
             timeout=10.0,
         )
         r.raise_for_status()
-        # Telegram API rate limit: saniyede 30 mesaj.
-        # Birden fazla haber varsa kısa bekleme ekle.
         time.sleep(0.5)
     except Exception as e:
-        print(f"⚠️ Telegram gönderim hatası ({kaynak}): {e}")
+        print(f"⚠️ Telegram gönderim hatası: {e}")
+
+
+def trigger_workflow(client: httpx.Client) -> bool:
+    """GitHub Actions workflow'unu manuel tetikler."""
+    if not GITHUB_TOKEN_PAT or not GITHUB_REPO:
+        return False
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/haber-botu.yml/dispatches"
+    try:
+        r = client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN_PAT}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"ref": "main"},
+            timeout=10.0,
+        )
+        return r.status_code == 204
+    except Exception as e:
+        print(f"⚠️ Workflow tetikleme hatası: {e}")
+        return False
+
+
+def get_telegram_updates(client: httpx.Client, offset: int = 0) -> list:
+    """Telegram'dan gelen yeni mesajları çeker."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    try:
+        r = client.get(url, params={"offset": offset, "timeout": 5}, timeout=10.0)
+        data = r.json()
+        return data.get("result", [])
+    except Exception as e:
+        print(f"⚠️ Telegram güncelleme hatası: {e}")
+        return []
+
+
+def handle_telegram_commands(client: httpx.Client, state: dict, yeni_haber_sayisi: int) -> None:
+    """
+    Telegram'dan gelen komutları işler.
+    Offset bilgisi state içinde tutulur, böylece aynı komut iki kez işlenmez.
+    """
+    offset = state.get("_telegram_offset", 0)
+    updates = get_telegram_updates(client, offset)
+
+    for update in updates:
+        update_id = update.get("update_id", 0)
+        state["_telegram_offset"] = update_id + 1
+
+        message = update.get("message", {})
+        text = message.get("text", "").strip().lower()
+        from_id = str(message.get("from", {}).get("id", ""))
+        chat_id = str(message.get("chat", {}).get("id", ""))
+
+        # Sadece kendi mesajlarımıza cevap ver
+        if from_id != str(CHAT_ID) and chat_id != str(CHAT_ID):
+            continue
+
+        if text == "/durum":
+            son_calisma = state.get("_son_calisma", "Henüz kayıt yok")
+            toplam_bildirim = state.get("_toplam_bildirim", 0)
+            aktif_kaynaklar = ", ".join(FEEDS.keys())
+            mesaj = (
+                f"🤖 <b>Bot Durumu</b>\n\n"
+                f"✅ Bot aktif ve çalışıyor\n"
+                f"🕐 Son çalışma: <b>{son_calisma}</b>\n"
+                f"📨 Toplam gönderilen haber: <b>{toplam_bildirim}</b>\n\n"
+                f"📡 <b>Aktif kaynaklar:</b>\n{aktif_kaynaklar}"
+            )
+            send_telegram(client, mesaj, chat_id)
+
+        elif text == "/başlat" or text == "/baslat":
+            basarili = trigger_workflow(client)
+            if basarili:
+                send_telegram(client, "▶️ Bot manuel olarak tetiklendi! Birkaç dakika içinde haberler kontrol edilecek.", chat_id)
+            else:
+                send_telegram(client, "⚠️ Tetikleme başarısız. GITHUB_TOKEN_PAT ve GITHUB_REPO ayarlarını kontrol et.", chat_id)
 
 
 def main() -> None:
@@ -109,6 +180,11 @@ def main() -> None:
     eski_haber_sayisi = 0
 
     with httpx.Client() as client:
+
+        # Önce Telegram komutlarını işle
+        handle_telegram_commands(client, state, yeni_haber_sayisi)
+
+        # Sonra haberleri kontrol et
         for kaynak, feed_url in FEEDS.items():
             try:
                 feed = feedparser.parse(feed_url)
@@ -117,16 +193,13 @@ def main() -> None:
                 continue
 
             if feed.bozo and not feed.entries:
-                print(f"⚠️ {kaynak} feed hatalı görünüyor, atlanıyor.")
+                print(f"⚠️ {kaynak} feed hatalı, atlanıyor.")
                 continue
 
             seen_ids = set(state.get(kaynak, []))
             ilk_calisma = kaynak not in state
             guncel_id_listesi = list(seen_ids)
 
-            # RSS'ler genelde en yeni haber en üstte gelir.
-            # Ters çevirip eskiden yeniye işleyelim — Telegram'da
-            # haberler kronolojik sırayla görünsün.
             entries = list(reversed(feed.entries))
 
             for entry in entries:
@@ -137,26 +210,29 @@ def main() -> None:
                 title = entry.get("title", "").strip()
                 link = entry.get("link", "").strip()
 
-                # ID'yi her durumda kaydet — gönderip göndermediğimizden bağımsız.
                 seen_ids.add(entry_id)
                 guncel_id_listesi.append(entry_id)
 
                 if ilk_calisma:
-                    continue  # İlk çalışmada sadece kaydet, gönderme
+                    continue
 
                 if not is_recent(entry):
                     eski_haber_sayisi += 1
-                    continue  # Eski haber, atla
+                    continue
 
-                send_telegram(client, kaynak, title, link)
+                send_telegram(client, f"📰 <b>{kaynak}</b>\n{title}\n{link}")
                 yeni_haber_sayisi += 1
 
             state[kaynak] = guncel_id_listesi[-MAX_STORED_PER_FEED:]
 
             if ilk_calisma:
-                print(f"ℹ️ {kaynak}: ilk çalıştırma, mevcut haberler kaydedildi.")
+                print(f"ℹ️ {kaynak}: ilk çalıştırma, haberler kaydedildi.")
             else:
                 print(f"✔️ {kaynak}: kontrol edildi.")
+
+        # Durum bilgisini güncelle
+        state["_son_calisma"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+        state["_toplam_bildirim"] = state.get("_toplam_bildirim", 0) + yeni_haber_sayisi
 
     save_state(state)
     if eski_haber_sayisi:
