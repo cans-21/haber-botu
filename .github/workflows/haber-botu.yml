@@ -2,14 +2,11 @@ name: Son Dakika Haber Botu
 
 on:
   schedule:
-    # Her 5 dakikada bir çalışır (UTC saatine göre).
-    # GitHub, yoğunluğa göre birkaç dakika gecikmeli tetikleyebilir, bu normaldir.
-    - cron: "*/5 * * * *"
-  # Bunu eklemek, GitHub'ın "Actions" sekmesinden botu manuel olarak
-  # da (butona basarak) çalıştırabilmeni sağlar - test için kullanışlı.
+    # Her dakika tetiklenir. GitHub bazen geciktirse bile
+    # sonraki dakika tekrar dener — gecikme 1-3 dakikaya iner.
+    - cron: "* * * * *"
   workflow_dispatch:
 
-# seen_ids.json dosyasını depoya geri yazabilmek için gerekli izin.
 permissions:
   contents: write
 
