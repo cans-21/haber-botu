@@ -1,8 +1,9 @@
+# v3
 name: Son Dakika Haber Botu
 
 on:
   schedule:
-    # Her dakika tetiklenir. GitHub bazen geciktirse bile
+    # Her 2 dakikada tetiklenir. GitHub bazen geciktirse bile
     # sonraki dakika tekrar dener — gecikme 1-3 dakikaya iner.
     - cron: "*/2 * * * *"
   workflow_dispatch:
