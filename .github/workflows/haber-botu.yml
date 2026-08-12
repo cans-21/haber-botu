@@ -4,7 +4,7 @@ on:
   schedule:
     # Her dakika tetiklenir. GitHub bazen geciktirse bile
     # sonraki dakika tekrar dener — gecikme 1-3 dakikaya iner.
-    - cron: "* * * * *"
+    - cron: "*/2 * * * *"
   workflow_dispatch:
 
 permissions:
