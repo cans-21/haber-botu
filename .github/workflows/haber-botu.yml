@@ -30,6 +30,8 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          GH_TOKEN_PAT: ${{ secrets.GH_TOKEN_PAT }}
+          GH_REPO: ${{ secrets.GH_REPO }}
         run: python main.py
 
       - name: Durum dosyasını depoya kaydet
