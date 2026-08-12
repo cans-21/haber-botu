@@ -101,14 +101,14 @@ def send_telegram(client: httpx.Client, text: str, chat_id: str = None) -> None:
 
 def trigger_workflow(client: httpx.Client) -> bool:
     """GitHub Actions workflow'unu manuel tetikler."""
-    if not GITHUB_TOKEN_PAT or not GITHUB_REPO:
+    if not GH_TOKEN_PAT or not GH_REPO:
         return False
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/haber-botu.yml/dispatches"
+    url = f"https://api.github.com/repos/{GH_REPO}/actions/workflows/haber-botu.yml/dispatches"
     try:
         r = client.post(
             url,
             headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN_PAT}",
+                "Authorization": f"Bearer {GH_TOKEN_PAT}",
                 "Accept": "application/vnd.github+json",
             },
             json={"ref": "main"},
@@ -171,7 +171,7 @@ def handle_telegram_commands(client: httpx.Client, state: dict, yeni_haber_sayis
             if basarili:
                 send_telegram(client, "▶️ Bot manuel olarak tetiklendi! Birkaç dakika içinde haberler kontrol edilecek.", chat_id)
             else:
-                send_telegram(client, "⚠️ Tetikleme başarısız. GITHUB_TOKEN_PAT ve GITHUB_REPO ayarlarını kontrol et.", chat_id)
+                send_telegram(client, "⚠️ Tetikleme başarısız. GH_TOKEN_PAT ve GH_REPO ayarlarını kontrol et.", chat_id)
 
 
 def main() -> None:
