@@ -62,7 +62,7 @@ def save_state(state: dict) -> None:
     )
 
 
-def parse_entry_time(entry) -> datetime | None:
+def parse_entry_time(entry):
     for field in ("published_parsed", "updated_parsed", "created_parsed"):
         t = entry.get(field)
         if t:
