@@ -3,7 +3,7 @@ name: Son Dakika Haber Botu
 
 on:
   schedule:
-    - cron: "* * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 concurrency:
