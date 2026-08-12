@@ -27,8 +27,8 @@ import httpx
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
-GITHUB_TOKEN_PAT = os.environ.get("GITHUB_TOKEN_PAT", "")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
+GH_TOKEN_PAT = os.environ.get("GH_TOKEN_PAT", "")
+GH_REPO = os.environ.get("GH_REPO", "")
 
 FEEDS = {
     "NTV": "https://www.ntv.com.tr/gundem.rss",
